@@ -6,6 +6,8 @@ import json
 import requests
 import threading
 import time
+from dotenv import load_dotenv
+load_dotenv()
 from flask import Flask, request, render_template, send_file, abort, make_response, jsonify
 import folium
 from geopy.geocoders import Nominatim

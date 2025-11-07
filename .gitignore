@@ -1,10 +1,10 @@
+# .gitignore
+.env
 __pycache__/
 *.pyc
 venv/
 env/
-.env
+.env.*
 *.log
 *.tmp
-*.db
-*.sqlite3
-*.html  # opcional: evita subir HTML temporales creados por folium
+*.html   # opcional: evita subir mapas temporales generados
