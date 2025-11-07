@@ -1,16 +1,17 @@
-# route_mapper.py
+# app.py
 import os
 import sys
 import tempfile
 import random
 import requests
 import folium
+import threading
+import time
 
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
 # --- IMPORTS DE PyQt SOLO SI SE EJECUTA MODO ESCRITORIO ---
-# Encapsulamos las importaciones de PyQt para que no fallen en entornos server sin GUI.
 PYQT_AVAILABLE = True
 try:
     from PyQt5.QtWidgets import (
@@ -19,16 +20,13 @@ try:
     )
     from PyQt5.QtWebEngineWidgets import QWebEngineView
     from PyQt5.QtCore import QUrl, Qt
-except Exception as e:
+except Exception:
     PYQT_AVAILABLE = False
-    # No imprimas demasiado en producción, esto es para depuración local
-    # print("PyQt no disponible (modo servidor):", e)
 
 
 # -----------------------------
 # TUS FUNCIONES ORIGINALES (sin cambios funcionales)
 # -----------------------------
-
 def get_coordinates(address, user_agent="route_mapper", timeout=10):
     """Devuelve (lat, lon) o None si no encuentra."""
     geolocator = Nominatim(user_agent=user_agent, timeout=timeout)
@@ -37,7 +35,6 @@ def get_coordinates(address, user_agent="route_mapper", timeout=10):
         if location:
             return (location.latitude, location.longitude)
     except (GeocoderTimedOut, GeocoderServiceError) as e:
-        # Puedes loguear e intentar de nuevo si quieres
         print("Error geocoding:", e)
     return None
 
@@ -79,17 +76,13 @@ def generate_stations_near_start(route_coords, num_stations=3, max_distance_mete
         return []
 
     stations = []
-    # Usamos los primeros puntos de la ruta para ubicar estaciones
     for i in range(num_stations):
         point = route_coords[min(i, len(route_coords) - 1)]
         lat = point[0]
         lon = point[1]
-        # Aproximación simple: 1 grado ≈ 111 km
         lat_offset = random.uniform(-max_distance_meters / 111000.0, max_distance_meters / 111000.0)
-        # Para longitud corregimos por latitud
         lon_offset = random.uniform(-max_distance_meters / (111000.0 * max(0.5, abs(lat) / 90.0 + 0.5)),
                                     max_distance_meters / (111000.0 * max(0.5, abs(lat) / 90.0 + 0.5)))
-        # La fórmula anterior es una heurística; para propósito de demo está bien.
         stations.append((lat + lat_offset, lon + lon_offset))
     return stations
 
@@ -157,7 +150,6 @@ if PYQT_AVAILABLE:
             self.initUI()
 
         def initUI(self):
-            # Mostrar selector de discapacidad al inicio
             disability_dialog = DisabilitySelector()
             if disability_dialog.exec_() == QDialog.Accepted:
                 self.disability_type = disability_dialog.get_disability()
@@ -178,10 +170,8 @@ if PYQT_AVAILABLE:
             self.generate_button = QPushButton("Generar Mapa")
             self.generate_button.clicked.connect(self.generate_map)
 
-            # Vista del mapa
             self.map_view = QWebEngineView()
 
-            # Info label (tiempo y distancia)
             self.info_label = QLabel("")
             self.info_label.setAlignment(Qt.AlignCenter)
             self.info_label.setStyleSheet("""
@@ -209,7 +199,6 @@ if PYQT_AVAILABLE:
                 QMessageBox.warning(self, "Error", "Por favor ingrese direcciones de inicio y final.")
                 return
 
-            # Obtener coordenadas
             start_coords = get_coordinates(start_addr)
             if not start_coords:
                 QMessageBox.critical(self, "Error", f"No se encontraron coordenadas para: {start_addr}")
@@ -220,23 +209,16 @@ if PYQT_AVAILABLE:
                 QMessageBox.critical(self, "Error", f"No se encontraron coordenadas para: {end_addr}")
                 return
 
-            # Obtener ruta desde OSRM
             route_coords, duration, distance = get_route(start_coords, end_coords)
             if not route_coords:
                 QMessageBox.critical(self, "Error", "No se pudo obtener la ruta desde el servicio de enrutamiento.")
                 return
 
-            # Crear el mapa centrado en el punto inicial
             m = folium.Map(location=start_coords, zoom_start=14)
-
-            # Añadir línea de la ruta
             folium.PolyLine(route_coords, weight=6, opacity=0.8).add_to(m)
-
-            # Añadir marcadores de inicio y fin
             folium.Marker(location=start_coords, popup="Inicio", tooltip="Inicio").add_to(m)
             folium.Marker(location=end_coords, popup="Destino", tooltip="Destino").add_to(m)
 
-            # Generar estaciones cercanas simuladas
             stations = generate_stations_near_start(route_coords, num_stations=4, max_distance_meters=40)
             for idx, st in enumerate(stations, start=1):
                 folium.CircleMarker(location=st,
@@ -244,7 +226,6 @@ if PYQT_AVAILABLE:
                                     popup=f"Estación {idx} (simulada)",
                                     tooltip=f"Estación {idx}").add_to(m)
 
-            # Info de tiempo y distancia (OSRM devuelve segundos y metros)
             duration_min = duration / 60.0 if duration else None
             distance_km = distance / 1000.0 if distance else None
             info_text = "Discapacidad seleccionada: {}".format(self.disability_type or "No especificada")
@@ -253,12 +234,10 @@ if PYQT_AVAILABLE:
 
             self.info_label.setText(info_text)
 
-            # Guardar mapa a un HTML temporal y cargarlo en QWebEngineView
             try:
                 fd, path = tempfile.mkstemp(suffix=".html")
                 os.close(fd)
                 m.save(path)
-                # Guardamos la ruta para poder eliminar el archivo después si queremos
                 self.temp_html_path = path
                 local_url = QUrl.fromLocalFile(path)
                 self.map_view.setUrl(local_url)
@@ -267,7 +246,6 @@ if PYQT_AVAILABLE:
                 print("Error saving map HTML:", e)
 
         def closeEvent(self, event):
-            # Intentar eliminar el HTML temporal al cerrar
             try:
                 if self.temp_html_path and os.path.exists(self.temp_html_path):
                     os.remove(self.temp_html_path)
@@ -286,11 +264,10 @@ if PYQT_AVAILABLE:
 # -----------------------------
 # AÑADIMOS UN FLASK APP USANDO LAS MISMAS FUNCIONES
 # -----------------------------
-from flask import Flask, request, send_file, render_template_string, abort, jsonify, make_response
+from flask import Flask, request, send_file, render_template, render_template_string, abort, jsonify, make_response
 
-flask_app = Flask(__name__)
+flask_app = Flask(__name__, template_folder="templates", static_folder="static")
 
-# Permitir embedding en Google Sites agregando CSP frame-ancestors en after_request
 FRAME_ANCESTORS_ENV = os.environ.get(
     "FRAME_ANCESTORS",
     "https://sites.google.com https://*.google.com https://*.googleusercontent.com"
@@ -300,10 +277,10 @@ FRAME_ANCESTORS_ENV = os.environ.get(
 def add_frame_headers(response):
     csp_value = f"frame-ancestors 'self' {FRAME_ANCESTORS_ENV};"
     response.headers["Content-Security-Policy"] = csp_value
-    # No añadimos X-Frame-Options para evitar bloqueo de embedding
     return response
 
-INDEX_HTML = """
+# Preferir template file si existe, y si no usar el inline fallback (compatibilidad)
+INDEX_INLINE = """
 <!doctype html>
 <html>
 <head><meta charset="utf-8"><title>Route Mapper (Web)</title></head>
@@ -324,7 +301,11 @@ INDEX_HTML = """
 
 @flask_app.route("/")
 def index_web():
-    return render_template_string(INDEX_HTML)
+    # si templates/index.html existe, servirlo, si no usar inline
+    tpl_path = os.path.join(os.path.dirname(__file__), "templates", "index.html")
+    if os.path.exists(tpl_path):
+        return render_template("index.html")
+    return render_template_string(INDEX_INLINE)
 
 @flask_app.route("/map")
 def map_web():
@@ -343,12 +324,10 @@ def map_web():
     if not start_coords or not end_coords:
         return abort(404, "No se encontraron coordenadas para alguna dirección")
 
-    # reusar tu función get_route
     route_coords, duration, distance = get_route(start_coords, end_coords)
     if not route_coords:
         return abort(500, "No se pudo obtener la ruta desde OSRM")
 
-    # construir mapa con folium idéntico a la versión desktop
     m = folium.Map(location=start_coords, zoom_start=14)
     folium.PolyLine(route_coords, weight=6, opacity=0.8).add_to(m)
     folium.Marker(location=start_coords, popup="Inicio", tooltip="Inicio").add_to(m)
@@ -358,7 +337,6 @@ def map_web():
     for idx, s in enumerate(stations, start=1):
         folium.CircleMarker(location=s, radius=6, popup=f"Estación {idx} (simulada)", tooltip=f"Estación {idx}").add_to(m)
 
-    # Info adicional (no rompe tu lógica original)
     distance_km = distance / 1000.0 if distance else None
     duration_min = duration / 60.0 if duration else None
     caption = ""
@@ -366,24 +344,28 @@ def map_web():
         caption = f"<div style='font-size:12px'>Distancia: {distance_km:.2f} km — Duración aprox.: {duration_min:.1f} min</div>"
         folium.map.Marker(route_coords[len(route_coords)//2], icon=folium.DivIcon(html=caption)).add_to(m)
 
-    # Guardar HTML temporal y devolverlo (Flask servirá ese HTML)
     tmp = tempfile.NamedTemporaryFile(suffix=".html", delete=False)
     tmp.close()
     m.save(tmp.name)
     resp = make_response(send_file(tmp.name, mimetype="text/html"))
-    # (opcional) puedes borrar el tmp file después con un job asíncrono; lo dejamos para depuración
+
+    def _del_later(path, delay=30):
+        try:
+            time.sleep(delay)
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+    threading.Thread(target=_del_later, args=(tmp.name, 30), daemon=True).start()
     return resp
 
 # Exponer la variable 'app' para gunicorn/render
 app = flask_app
 
-
 # -----------------------------
-# EJECUCIÓN: si env FLASK_MODE=web (o si nos piden gunicorn en Render), corre Flask.
-# Si el entorno tiene PyQt y el usuario ejecuta el script normal, se ejecuta el GUI.
+# EJECUCIÓN
 # -----------------------------
 def main():
-    # Modo web si pedimos explícitamente con variable de entorno o argumento
     mode_env = os.environ.get("RUN_MODE", "").lower()
     if len(sys.argv) > 1 and sys.argv[1].lower() in ("web", "server", "flask"):
         mode = "web"
@@ -393,17 +375,13 @@ def main():
         mode = "desktop"
 
     if mode == "web":
-        # Si ejecutas directamente: python route_mapper.py web
-        # Para despliegue con gunicorn o render, gunicorn importará 'app' y no llegará aquí.
         port = int(os.environ.get("PORT", 5000))
         flask_app.run(host="0.0.0.0", port=port)
     else:
         if not PYQT_AVAILABLE:
             print("PyQt no está disponible en este entorno. Para modo desktop instala PyQt5.")
             return
-        # Ejecutar GUI tal como estaba
         main_desktop()
-
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,139 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Route Mapper — Web</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    #map { height: 520px; width: 100%; border-radius: 8px; }
+  </style>
+</head>
+<body class="bg-light">
+<div class="container py-4">
+  <h1 class="mb-3">Route Mapper</h1>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <form id="frm" class="row g-2 align-items-center">
+        <div class="col-auto">
+          <input id="start" class="form-control" placeholder="Dirección inicial (ej: Bogotá, Colombia)" required>
+        </div>
+        <div class="col-auto">
+          <input id="end" class="form-control" placeholder="Dirección final (ej: Medellín, Colombia)" required>
+        </div>
+        <div class="col-auto">
+          <select id="num_stations" class="form-select">
+            <option value="2">2</option><option value="3" selected>3</option><option value="4">4</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <button id="go" type="button" class="btn btn-primary">Generar</button>
+        </div>
+        <div class="col-auto ms-auto">
+          <button id="ai-btn" class="btn btn-outline-secondary" type="button">Sugerir con IA</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="map" class="mb-3"></div>
+
+  <div class="d-flex gap-2">
+    <div id="info" class="flex-grow-1"></div>
+    <div class="w-50">
+      <textarea id="ai-prompt" class="form-control" rows="3" placeholder="Pide a la IA: 'Sugiere una ruta más accesible para movilidad reducida'"></textarea>
+      <div class="mt-2">
+        <div id="ai-result" class="small text-muted"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const map = L.map('map').setView([4.6, -74.07], 5);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  let routeLayer = null;
+  let stationsLayer = null;
+  let startMarker = null;
+  let endMarker = null;
+  let currentParams = null;
+
+  function clearLayers(){
+    if(routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+    if(stationsLayer) { map.removeLayer(stationsLayer); stationsLayer = null; }
+    if(startMarker) { map.removeLayer(startMarker); startMarker = null; }
+    if(endMarker) { map.removeLayer(endMarker); endMarker = null; }
+  }
+
+  async function fetchRoute(start, end, num_stations){
+    try{
+      const q = new URLSearchParams({start, end, num_stations});
+      const res = await fetch('/api/route?' + q.toString());
+      if(!res.ok){
+        const e = await res.json().catch(()=>({error:'error'}));
+        document.getElementById('info').innerHTML = '<div class="alert alert-warning">'+(e.error||'Error')+'</div>';
+        return;
+      }
+      const data = await res.json();
+      clearLayers();
+      const latlngs = data.route.map(p=>[p.lat,p.lng]);
+      routeLayer = L.polyline(latlngs, {color:'blue', weight:5}).addTo(map);
+      startMarker = L.marker([data.start.lat,data.start.lng], {title:'Inicio'}).addTo(map);
+      endMarker = L.marker([data.end.lat,data.end.lng], {title:'Destino'}).addTo(map);
+      stationsLayer = L.layerGroup(data.stations.map(s=>L.circleMarker([s.lat,s.lng], {radius:6,color:'orange'}))).addTo(map);
+      map.fitBounds(routeLayer.getBounds(), {padding:[50,50]});
+      const km = (data.distance_meters/1000).toFixed(2);
+      const min = (data.duration_seconds/60).toFixed(1);
+      document.getElementById('info').innerHTML = `<div class="alert alert-info">Distancia: ${km} km — Duración aprox.: ${min} min</div>`;
+    }catch(err){
+      console.error(err);
+      document.getElementById('info').innerHTML = '<div class="alert alert-danger">Error al obtener la ruta.</div>';
+    }
+  }
+
+  document.getElementById('go').addEventListener('click', ()=>{
+    const start = document.getElementById('start').value.trim();
+    const end = document.getElementById('end').value.trim();
+    const num = document.getElementById('num_stations').value;
+    if(!start || !end){ alert('Ingresa inicio y fin'); return; }
+    currentParams = {start, end, num};
+    fetchRoute(start,end,num);
+  });
+
+  // IA integration
+  document.getElementById('ai-btn').addEventListener('click', async ()=>{
+    const prompt = document.getElementById('ai-prompt').value.trim();
+    if(!prompt){ alert('Escribe una petición para la IA'); return; }
+    const resEl = document.getElementById('ai-result');
+    resEl.innerText = 'Consultando IA…';
+    try{
+      const r = await fetch('/api/ai', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompt})});
+      const j = await r.json();
+      if(r.ok){
+        resEl.innerText = j.result;
+      } else {
+        resEl.innerText = j.error || JSON.stringify(j);
+      }
+    }catch(e){
+      resEl.innerText = 'Error llamando a IA';
+    }
+  });
+
+  // Auto-refresh stations every 15s (simulando conductores en tiempo real).
+  setInterval(()=>{
+    if(currentParams){
+      // only refresh stations & markers by re-fetching route data
+      fetchRoute(currentParams.start, currentParams.end, currentParams.num);
+    }
+  }, 15000);
+</script>
+</body>
+</html>

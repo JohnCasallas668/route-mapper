@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 venv/
 env/
-*.sqlite3
+.env
+*.log
+*.tmp
 *.db
-*.html
+*.sqlite3
+*.html  # opcional: evita subir HTML temporales creados por folium

@@ -2,13 +2,22 @@
 import os
 import tempfile
 import random
+import json
 import requests
-from flask import Flask, request, render_template, send_file, abort, make_response
+import threading
+import time
+from flask import Flask, request, render_template, send_file, abort, make_response, jsonify
 import folium
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
-app = Flask(__name__)
+# Optional OpenAI usage (install openai or use HTTP request)
+try:
+    import openai
+except Exception:
+    openai = None
+
+app = Flask(__name__, template_folder="templates", static_folder="static")
 
 USER_AGENT = os.environ.get("GEOPY_USER_AGENT", "route_mapper_web")
 FRAME_ANCESTORS = os.environ.get(
@@ -16,18 +25,21 @@ FRAME_ANCESTORS = os.environ.get(
     "https://sites.google.com https://*.google.com https://*.googleusercontent.com"
 )
 
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY")  # set in Render if you want IA
+
 @app.after_request
 def add_frame_headers(response):
     csp_value = f"frame-ancestors 'self' {FRAME_ANCESTORS};"
     response.headers["Content-Security-Policy"] = csp_value
     return response
 
+# ----- Reuse your geocode/route/stations functions -----
 def get_coordinates(address, timeout=10):
     geolocator = Nominatim(user_agent=USER_AGENT, timeout=timeout)
     try:
-        location = geolocator.geocode(address)
-        if location:
-            return (location.latitude, location.longitude)
+        loc = geolocator.geocode(address)
+        if loc:
+            return (loc.latitude, loc.longitude)
     except (GeocoderTimedOut, GeocoderServiceError):
         return None
     return None
@@ -66,22 +78,40 @@ def generate_stations_near_start(route_coords, num_stations=3, max_distance_mete
         stations.append((lat+lat_off, lon+lon_off))
     return stations
 
+# ----- Web frontend route (serves the page) -----
 @app.route("/", methods=["GET"])
 def index():
-    # Render template simple; si no usas templates, puedes devolver un simple form
-    return """
-    <!doctype html><html><head><meta charset='utf-8'><title>Route Mapper</title></head><body>
-    <h3>Route Mapper (Web)</h3>
-    <form action="/map" method="get">
-      <input name="start" placeholder="Dirección inicial" required>
-      <input name="end" placeholder="Dirección final" required>
-      <select name="num_stations"><option>2</option><option selected>3</option><option>4</option></select>
-      <button type="submit">Generar</button>
-    </form>
-    <p>Nota: Nominatim y OSRM tienen límites.</p>
-    </body></html>
-    """
+    return render_template("index.html")
 
+# ----- JSON endpoint: route data for frontend (used by Leaflet JS) -----
+@app.route("/api/route")
+def api_route():
+    start = request.args.get("start")
+    end = request.args.get("end")
+    try:
+        num_stations = int(request.args.get("num_stations", 3))
+    except ValueError:
+        num_stations = 3
+    if not start or not end:
+        return jsonify({"error": "start and end required"}), 400
+    start_coords = get_coordinates(start)
+    end_coords = get_coordinates(end)
+    if not start_coords or not end_coords:
+        return jsonify({"error": "coordinates not found"}), 404
+    route_coords, duration, distance = get_route(start_coords, end_coords)
+    if not route_coords:
+        return jsonify({"error": "no route available"}), 500
+    stations = generate_stations_near_start(route_coords, num_stations=num_stations)
+    return jsonify({
+        "start": {"lat": start_coords[0], "lng": start_coords[1]},
+        "end": {"lat": end_coords[0], "lng": end_coords[1]},
+        "route": [{"lat": lat, "lng": lng} for lat,lng in route_coords],
+        "stations": [{"lat": lat, "lng": lng} for lat,lng in stations],
+        "duration_seconds": duration,
+        "distance_meters": distance
+    })
+
+# ----- Optional: endpoint that returns full folium map HTML (backwards-compatible) -----
 @app.route("/map")
 def map_view():
     start = request.args.get("start")
@@ -91,26 +121,69 @@ def map_view():
     except ValueError:
         num_stations = 3
     if not start or not end:
-        return abort(400, "Start and end required")
+        return abort(400)
     start_coords = get_coordinates(start)
     end_coords = get_coordinates(end)
     if not start_coords or not end_coords:
-        return abort(404, "No coordinates")
+        return abort(404)
     route_coords, duration, distance = get_route(start_coords, end_coords)
     if not route_coords:
-        return abort(500, "No route")
+        return abort(500)
     m = folium.Map(location=start_coords, zoom_start=14)
     folium.PolyLine(route_coords, weight=6, opacity=0.8).add_to(m)
     folium.Marker(start_coords, popup="Inicio").add_to(m)
     folium.Marker(end_coords, popup="Destino").add_to(m)
     stations = generate_stations_near_start(route_coords, num_stations=num_stations)
-    for i, s in enumerate(stations, 1):
+    for i, s in enumerate(stations,1):
         folium.CircleMarker(location=s, radius=6, popup=f"Estación {i}").add_to(m)
     tmp = tempfile.NamedTemporaryFile(suffix=".html", delete=False)
     tmp.close()
     m.save(tmp.name)
-    resp = make_response(send_file(tmp.name, mimetype="text/html"))
-    return resp
+    response = make_response(send_file(tmp.name, mimetype="text/html"))
+
+    def _del_later(path, delay=30):
+        try:
+            time.sleep(delay)
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+    threading.Thread(target=_del_later, args=(tmp.name,30), daemon=True).start()
+    return response
+
+# ----- AI endpoint (proxy to OpenAI). Requires OPENAI_API_KEY env var set in Render -----
+@app.route("/api/ai", methods=["POST"])
+def api_ai():
+    data = request.json or {}
+    prompt = data.get("prompt", "")
+    if not prompt:
+        return jsonify({"error":"prompt required"}), 400
+
+    if not OPENAI_KEY:
+        return jsonify({
+            "error": "OpenAI API key not configured. Set OPENAI_API_KEY env var in Render."
+        }), 500
+
+    try:
+        if openai:
+            openai.api_key = OPENAI_KEY
+            resp = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[{"role":"user","content": prompt}],
+                max_tokens=300,
+            )
+            text = resp.choices[0].message.content
+            return jsonify({"result": text})
+        else:
+            headers = {"Authorization": f"Bearer {OPENAI_KEY}", "Content-Type":"application/json"}
+            body = {"model":"gpt-4o-mini","messages":[{"role":"user","content":prompt}],"max_tokens":300}
+            r = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=body, timeout=15)
+            r.raise_for_status()
+            j = r.json()
+            text = j["choices"][0]["message"]["content"]
+            return jsonify({"result": text})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)

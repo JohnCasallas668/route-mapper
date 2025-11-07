@@ -1,0 +1,4 @@
+/* static/style.css */
+body { background:#f6f7fb; font-family: Inter, Arial, sans-serif; }
+.container { max-width:1100px; }
+#map { box-shadow: 0 6px 18px rgba(0,0,0,0.08); border-radius:8px; }
