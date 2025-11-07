@@ -1,0 +1,5 @@
+Flask>=2.2.0
+folium
+geopy
+requests
+gunicorn
