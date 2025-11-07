@@ -1,80 +1,314 @@
-# app.py
+# route_mapper.py
 import os
+import sys
 import tempfile
 import random
 import requests
-from flask import Flask, request, send_file, render_template_string, abort
 import folium
+
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
-app = Flask(__name__)
+# --- IMPORTS DE PyQt SOLO SI SE EJECUTA MODO ESCRITORIO ---
+# Encapsulamos las importaciones de PyQt para que no fallen en entornos server sin GUI.
+PYQT_AVAILABLE = True
+try:
+    from PyQt5.QtWidgets import (
+        QApplication, QWidget, QVBoxLayout, QLabel,
+        QLineEdit, QPushButton, QMessageBox, QHBoxLayout, QDialog, QComboBox
+    )
+    from PyQt5.QtWebEngineWidgets import QWebEngineView
+    from PyQt5.QtCore import QUrl, Qt
+except Exception as e:
+    PYQT_AVAILABLE = False
+    # No imprimas demasiado en producción, esto es para depuración local
+    # print("PyQt no disponible (modo servidor):", e)
 
-USER_AGENT = os.environ.get("GEOPY_USER_AGENT", "route_mapper_render")
-FRAME_ANCESTORS = os.environ.get(
-    "FRAME_ANCESTORS",
-    "https://sites.google.com https://*.google.com https://*.googleusercontent.com"
-)
 
-@app.after_request
-def add_frame_headers(response):
-    # Permitir embedding en Google Sites / dominios google
-    csp_value = f"frame-ancestors 'self' {FRAME_ANCESTORS};"
-    response.headers["Content-Security-Policy"] = csp_value
-    # NO añadimos X-Frame-Options (podría bloquear el embedding)
-    return response
+# -----------------------------
+# TUS FUNCIONES ORIGINALES (sin cambios funcionales)
+# -----------------------------
 
-def get_coordinates(address, timeout=10):
-    geolocator = Nominatim(user_agent=USER_AGENT, timeout=timeout)
+def get_coordinates(address, user_agent="route_mapper", timeout=10):
+    """Devuelve (lat, lon) o None si no encuentra."""
+    geolocator = Nominatim(user_agent=user_agent, timeout=timeout)
     try:
         location = geolocator.geocode(address)
         if location:
             return (location.latitude, location.longitude)
     except (GeocoderTimedOut, GeocoderServiceError) as e:
-        app.logger.warning("Geocoding error: %s", e)
+        # Puedes loguear e intentar de nuevo si quieres
+        print("Error geocoding:", e)
     return None
 
-def get_route_osrm(start_coords, end_coords):
+
+def get_route(start_coords, end_coords):
+    """
+    Llama a la API pública de OSRM y devuelve:
+    (list_of_(lat,lon) tuples para la ruta, duration_seconds, distance_meters)
+    """
     if not start_coords or not end_coords:
         return None, None, None
+
     osrm_url = (
         f"https://router.project-osrm.org/route/v1/driving/"
         f"{start_coords[1]},{start_coords[0]};{end_coords[1]},{end_coords[0]}"
     )
     params = {"overview": "full", "geometries": "geojson"}
     try:
-        resp = requests.get(osrm_url, params=params, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
+        response = requests.get(osrm_url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
         if "routes" in data and data["routes"]:
-            coords = [(c[1], c[0]) for c in data["routes"][0]["geometry"]["coordinates"]]
-            duration = data["routes"][0].get("duration")
-            distance = data["routes"][0].get("distance")
-            return coords, duration, distance
+            route_coords = data["routes"][0]["geometry"]["coordinates"]  # [lng, lat] pairs
+            duration = data["routes"][0]["duration"]
+            distance = data["routes"][0]["distance"]
+            # Convertir a (lat, lon)
+            return [(coord[1], coord[0]) for coord in route_coords], duration, distance
     except requests.RequestException as e:
-        app.logger.warning("OSRM request error: %s", e)
+        print("Error al pedir ruta OSRM:", e)
     return None, None, None
 
-def generate_stations_near_start(route_coords, num_stations=3, max_distance_meters=40):
-    if not route_coords:
+
+def generate_stations_near_start(route_coords, num_stations=3, max_distance_meters=30):
+    """
+    Genera estaciones simuladas cerca del inicio de la ruta.
+    Devuelve lista de tuples (lat, lon).
+    """
+    if not route_coords or len(route_coords) == 0:
         return []
+
     stations = []
+    # Usamos los primeros puntos de la ruta para ubicar estaciones
     for i in range(num_stations):
         point = route_coords[min(i, len(route_coords) - 1)]
-        lat, lon = point
-        lat_off = random.uniform(-max_distance_meters / 111000.0, max_distance_meters / 111000.0)
-        lon_off = random.uniform(
-            -max_distance_meters / (111000.0 * max(0.2, abs(lat) / 90.0 + 0.2)),
-             max_distance_meters / (111000.0 * max(0.2, abs(lat) / 90.0 + 0.2)))
-        stations.append((lat + lat_off, lon + lon_off))
+        lat = point[0]
+        lon = point[1]
+        # Aproximación simple: 1 grado ≈ 111 km
+        lat_offset = random.uniform(-max_distance_meters / 111000.0, max_distance_meters / 111000.0)
+        # Para longitud corregimos por latitud
+        lon_offset = random.uniform(-max_distance_meters / (111000.0 * max(0.5, abs(lat) / 90.0 + 0.5)),
+                                    max_distance_meters / (111000.0 * max(0.5, abs(lat) / 90.0 + 0.5)))
+        # La fórmula anterior es una heurística; para propósito de demo está bien.
+        stations.append((lat + lat_offset, lon + lon_offset))
     return stations
+
+
+# -----------------------------
+# TUS CLASES PyQt (si PyQt está disponible, las dejamos intactas)
+# -----------------------------
+if PYQT_AVAILABLE:
+    class DisabilitySelector(QDialog):
+        def __init__(self):
+            super().__init__()
+            self.setWindowTitle("Seleccionar Discapacidad")
+            self.setGeometry(100, 100, 600, 200)
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #f5f5f5;
+                    font-family: Arial, sans-serif;
+                }
+                QLabel {
+                    font-size: 16px;
+                    color: #333;
+                    padding: 8px;
+                }
+                QComboBox {
+                    padding: 8px;
+                    font-size: 14px;
+                }
+                QPushButton {
+                    background-color: #4CAF50;
+                    color: white;
+                    padding: 8px;
+                    font-size: 14px;
+                    border: none;
+                    border-radius: 6px;
+                }
+                QPushButton:hover {
+                    background-color: #45a049;
+                }
+            """)
+            layout = QVBoxLayout()
+            self.label = QLabel("Seleccione su tipo de discapacidad:")
+            self.label.setAlignment(Qt.AlignCenter)
+            self.comboBox = QComboBox()
+            self.comboBox.addItems(["Movilidad reducida", "Visual", "Auditiva", "Otra"])
+            self.okButton = QPushButton("Aceptar")
+            self.okButton.clicked.connect(self.accept)
+            layout.addStretch(1)
+            layout.addWidget(self.label, alignment=Qt.AlignCenter)
+            layout.addWidget(self.comboBox, alignment=Qt.AlignCenter)
+            layout.addWidget(self.okButton, alignment=Qt.AlignCenter)
+            layout.addStretch(1)
+            self.setLayout(layout)
+
+        def get_disability(self):
+            return self.comboBox.currentText()
+
+
+    class RouteMapperApp(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.setWindowTitle("Mapa de Ruta con Conductores Cercanos")
+            self.setGeometry(100, 100, 1200, 800)
+            self.disability_type = None
+            self.temp_html_path = None
+            self.initUI()
+
+        def initUI(self):
+            # Mostrar selector de discapacidad al inicio
+            disability_dialog = DisabilitySelector()
+            if disability_dialog.exec_() == QDialog.Accepted:
+                self.disability_type = disability_dialog.get_disability()
+
+            main_layout = QVBoxLayout()
+            input_layout = QHBoxLayout()
+
+            self.start_label = QLabel("Dirección inicial:")
+            self.start_input = QLineEdit()
+            self.end_label = QLabel("Dirección final:")
+            self.end_input = QLineEdit()
+
+            input_layout.addWidget(self.start_label)
+            input_layout.addWidget(self.start_input)
+            input_layout.addWidget(self.end_label)
+            input_layout.addWidget(self.end_input)
+
+            self.generate_button = QPushButton("Generar Mapa")
+            self.generate_button.clicked.connect(self.generate_map)
+
+            # Vista del mapa
+            self.map_view = QWebEngineView()
+
+            # Info label (tiempo y distancia)
+            self.info_label = QLabel("")
+            self.info_label.setAlignment(Qt.AlignCenter)
+            self.info_label.setStyleSheet("""
+                QLabel {
+                    background-color: #ffffff;
+                    border: 1px solid #ccc;
+                    padding: 8px;
+                    font-size: 14px;
+                    border-radius: 6px;
+                }
+            """)
+
+            main_layout.addLayout(input_layout)
+            main_layout.addWidget(self.generate_button)
+            main_layout.addWidget(self.info_label)
+            main_layout.addWidget(self.map_view, stretch=1)
+
+            self.setLayout(main_layout)
+
+        def generate_map(self):
+            start_addr = self.start_input.text().strip()
+            end_addr = self.end_input.text().strip()
+
+            if not start_addr or not end_addr:
+                QMessageBox.warning(self, "Error", "Por favor ingrese direcciones de inicio y final.")
+                return
+
+            # Obtener coordenadas
+            start_coords = get_coordinates(start_addr)
+            if not start_coords:
+                QMessageBox.critical(self, "Error", f"No se encontraron coordenadas para: {start_addr}")
+                return
+
+            end_coords = get_coordinates(end_addr)
+            if not end_coords:
+                QMessageBox.critical(self, "Error", f"No se encontraron coordenadas para: {end_addr}")
+                return
+
+            # Obtener ruta desde OSRM
+            route_coords, duration, distance = get_route(start_coords, end_coords)
+            if not route_coords:
+                QMessageBox.critical(self, "Error", "No se pudo obtener la ruta desde el servicio de enrutamiento.")
+                return
+
+            # Crear el mapa centrado en el punto inicial
+            m = folium.Map(location=start_coords, zoom_start=14)
+
+            # Añadir línea de la ruta
+            folium.PolyLine(route_coords, weight=6, opacity=0.8).add_to(m)
+
+            # Añadir marcadores de inicio y fin
+            folium.Marker(location=start_coords, popup="Inicio", tooltip="Inicio").add_to(m)
+            folium.Marker(location=end_coords, popup="Destino", tooltip="Destino").add_to(m)
+
+            # Generar estaciones cercanas simuladas
+            stations = generate_stations_near_start(route_coords, num_stations=4, max_distance_meters=40)
+            for idx, st in enumerate(stations, start=1):
+                folium.CircleMarker(location=st,
+                                    radius=6,
+                                    popup=f"Estación {idx} (simulada)",
+                                    tooltip=f"Estación {idx}").add_to(m)
+
+            # Info de tiempo y distancia (OSRM devuelve segundos y metros)
+            duration_min = duration / 60.0 if duration else None
+            distance_km = distance / 1000.0 if distance else None
+            info_text = "Discapacidad seleccionada: {}".format(self.disability_type or "No especificada")
+            if duration_min is not None and distance_km is not None:
+                info_text += f" — Distancia: {distance_km:.2f} km, Duración aprox.: {duration_min:.1f} min"
+
+            self.info_label.setText(info_text)
+
+            # Guardar mapa a un HTML temporal y cargarlo en QWebEngineView
+            try:
+                fd, path = tempfile.mkstemp(suffix=".html")
+                os.close(fd)
+                m.save(path)
+                # Guardamos la ruta para poder eliminar el archivo después si queremos
+                self.temp_html_path = path
+                local_url = QUrl.fromLocalFile(path)
+                self.map_view.setUrl(local_url)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"No se pudo crear el archivo HTML del mapa: {e}")
+                print("Error saving map HTML:", e)
+
+        def closeEvent(self, event):
+            # Intentar eliminar el HTML temporal al cerrar
+            try:
+                if self.temp_html_path and os.path.exists(self.temp_html_path):
+                    os.remove(self.temp_html_path)
+            except Exception:
+                pass
+            event.accept()
+
+
+    def main_desktop():
+        app = QApplication(sys.argv)
+        window = RouteMapperApp()
+        window.show()
+        sys.exit(app.exec_())
+
+
+# -----------------------------
+# AÑADIMOS UN FLASK APP USANDO LAS MISMAS FUNCIONES
+# -----------------------------
+from flask import Flask, request, send_file, render_template_string, abort, jsonify, make_response
+
+flask_app = Flask(__name__)
+
+# Permitir embedding en Google Sites agregando CSP frame-ancestors en after_request
+FRAME_ANCESTORS_ENV = os.environ.get(
+    "FRAME_ANCESTORS",
+    "https://sites.google.com https://*.google.com https://*.googleusercontent.com"
+)
+
+@flask_app.after_request
+def add_frame_headers(response):
+    csp_value = f"frame-ancestors 'self' {FRAME_ANCESTORS_ENV};"
+    response.headers["Content-Security-Policy"] = csp_value
+    # No añadimos X-Frame-Options para evitar bloqueo de embedding
+    return response
 
 INDEX_HTML = """
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Route Mapper</title></head>
+<head><meta charset="utf-8"><title>Route Mapper (Web)</title></head>
 <body>
-  <h3>Route Mapper</h3>
+  <h3>Route Mapper (Web)</h3>
   <form action="/map" method="get" target="_self">
     <input name="start" type="text" placeholder="Dirección inicial" required>
     <input name="end" type="text" placeholder="Dirección final" required>
@@ -88,12 +322,12 @@ INDEX_HTML = """
 </html>
 """
 
-@app.route("/")
-def index():
+@flask_app.route("/")
+def index_web():
     return render_template_string(INDEX_HTML)
 
-@app.route("/map")
-def map_view():
+@flask_app.route("/map")
+def map_web():
     start = request.args.get("start")
     end = request.args.get("end")
     try:
@@ -109,24 +343,67 @@ def map_view():
     if not start_coords or not end_coords:
         return abort(404, "No se encontraron coordenadas para alguna dirección")
 
-    route_coords, duration, distance = get_route_osrm(start_coords, end_coords)
+    # reusar tu función get_route
+    route_coords, duration, distance = get_route(start_coords, end_coords)
     if not route_coords:
         return abort(500, "No se pudo obtener la ruta desde OSRM")
 
-    m = folium.Map(location=start_coords, zoom_start=13)
+    # construir mapa con folium idéntico a la versión desktop
+    m = folium.Map(location=start_coords, zoom_start=14)
     folium.PolyLine(route_coords, weight=6, opacity=0.8).add_to(m)
-    folium.Marker(location=start_coords, popup="Inicio").add_to(m)
-    folium.Marker(location=end_coords, popup="Destino").add_to(m)
+    folium.Marker(location=start_coords, popup="Inicio", tooltip="Inicio").add_to(m)
+    folium.Marker(location=end_coords, popup="Destino", tooltip="Destino").add_to(m)
 
-    stations = generate_stations_near_start(route_coords, num_stations=num_stations)
-    for i, s in enumerate(stations, 1):
-        folium.CircleMarker(location=s, radius=6, popup=f"Estación {i}").add_to(m)
+    stations = generate_stations_near_start(route_coords, num_stations=num_stations, max_distance_meters=40)
+    for idx, s in enumerate(stations, start=1):
+        folium.CircleMarker(location=s, radius=6, popup=f"Estación {idx} (simulada)", tooltip=f"Estación {idx}").add_to(m)
 
+    # Info adicional (no rompe tu lógica original)
+    distance_km = distance / 1000.0 if distance else None
+    duration_min = duration / 60.0 if duration else None
+    caption = ""
+    if distance_km is not None and duration_min is not None:
+        caption = f"<div style='font-size:12px'>Distancia: {distance_km:.2f} km — Duración aprox.: {duration_min:.1f} min</div>"
+        folium.map.Marker(route_coords[len(route_coords)//2], icon=folium.DivIcon(html=caption)).add_to(m)
+
+    # Guardar HTML temporal y devolverlo (Flask servirá ese HTML)
     tmp = tempfile.NamedTemporaryFile(suffix=".html", delete=False)
     tmp.close()
     m.save(tmp.name)
-    return send_file(tmp.name, mimetype="text/html")
+    resp = make_response(send_file(tmp.name, mimetype="text/html"))
+    # (opcional) puedes borrar el tmp file después con un job asíncrono; lo dejamos para depuración
+    return resp
+
+# Exponer la variable 'app' para gunicorn/render
+app = flask_app
+
+
+# -----------------------------
+# EJECUCIÓN: si env FLASK_MODE=web (o si nos piden gunicorn en Render), corre Flask.
+# Si el entorno tiene PyQt y el usuario ejecuta el script normal, se ejecuta el GUI.
+# -----------------------------
+def main():
+    # Modo web si pedimos explícitamente con variable de entorno o argumento
+    mode_env = os.environ.get("RUN_MODE", "").lower()
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ("web", "server", "flask"):
+        mode = "web"
+    elif mode_env == "web":
+        mode = "web"
+    else:
+        mode = "desktop"
+
+    if mode == "web":
+        # Si ejecutas directamente: python route_mapper.py web
+        # Para despliegue con gunicorn o render, gunicorn importará 'app' y no llegará aquí.
+        port = int(os.environ.get("PORT", 5000))
+        flask_app.run(host="0.0.0.0", port=port)
+    else:
+        if not PYQT_AVAILABLE:
+            print("PyQt no está disponible en este entorno. Para modo desktop instala PyQt5.")
+            return
+        # Ejecutar GUI tal como estaba
+        main_desktop()
+
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    main()

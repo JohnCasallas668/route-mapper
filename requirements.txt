@@ -3,3 +3,4 @@ folium
 geopy
 requests
 gunicorn
+# PyQt5 OMITIDO intencionalmente para evitar fallos de build en Render (si quieres incluirlo, añade PyQt5 aquí)
