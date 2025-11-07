@@ -7,4 +7,19 @@ env/
 .env.*
 *.log
 *.tmp
-*.html   # opcional: evita subir mapas temporales generados
+*.html
+.DS_Store
+*.sqlite3
+instance/
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

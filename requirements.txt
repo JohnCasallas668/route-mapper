@@ -1,7 +1,8 @@
-Flask
-folium
-geopy
-requests
-gunicorn
-python-dotenv
-openai
+Flask==2.3.3
+folium==0.14.0
+geopy==2.3.0
+requests==2.31.0
+gunicorn==21.2.0
+python-dotenv==1.0.0
+openai==1.3.0
+PyQt5==5.15.9

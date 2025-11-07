@@ -1,4 +1,4 @@
-# app.py
+# app.py - Versión unificada para compatibilidad
 import os
 import sys
 import tempfile
@@ -7,30 +7,37 @@ import requests
 import folium
 import threading
 import time
-
 from dotenv import load_dotenv
 load_dotenv()
 
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
-# --- IMPORTS DE PyQt SOLO SI SE EJECUTA MODO ESCRITORIO ---
-PYQT_AVAILABLE = True
-try:
-    from PyQt5.QtWidgets import (
-        QApplication, QWidget, QVBoxLayout, QLabel,
-        QLineEdit, QPushButton, QMessageBox, QHBoxLayout, QDialog, QComboBox
-    )
-    from PyQt5.QtWebEngineWidgets import QWebEngineView
-    from PyQt5.QtCore import QUrl, Qt
-except Exception:
+# Check if running in web mode
+WEB_MODE = os.environ.get('RENDER', False) or os.environ.get('FLASK_MODE') == 'web'
+
+if not WEB_MODE:
+    # Only import PyQt for desktop mode
+    try:
+        from PyQt5.QtWidgets import (
+            QApplication, QWidget, QVBoxLayout, QLabel,
+            QLineEdit, QPushButton, QMessageBox, QHBoxLayout, QDialog, QComboBox
+        )
+        from PyQt5.QtWebEngineWidgets import QWebEngineView
+        from PyQt5.QtCore import QUrl, Qt
+        PYQT_AVAILABLE = True
+    except Exception:
+        PYQT_AVAILABLE = False
+else:
     PYQT_AVAILABLE = False
 
+# Flask imports for web mode
+from flask import Flask, request, send_file, render_template, abort, jsonify, make_response
 
 # -----------------------------
-# TUS FUNCIONES ORIGINALES (sin cambios funcionales)
+# CORE FUNCTIONS (shared between desktop and web)
 # -----------------------------
-def get_coordinates(address, user_agent="route_mapper", timeout=10):
+def get_coordinates(address, user_agent="route_mapper_app", timeout=10):
     """Devuelve (lat, lon) o None si no encuentra."""
     geolocator = Nominatim(user_agent=user_agent, timeout=timeout)
     try:
@@ -41,12 +48,8 @@ def get_coordinates(address, user_agent="route_mapper", timeout=10):
         print("Error geocoding:", e)
     return None
 
-
 def get_route(start_coords, end_coords):
-    """
-    Llama a la API pública de OSRM y devuelve:
-    (list_of_(lat,lon) tuples para la ruta, duration_seconds, distance_meters)
-    """
+    """Llama a la API pública de OSRM y devuelve la ruta."""
     if not start_coords or not end_coords:
         return None, None, None
 
@@ -60,44 +63,34 @@ def get_route(start_coords, end_coords):
         response.raise_for_status()
         data = response.json()
         if "routes" in data and data["routes"]:
-            route_coords = data["routes"][0]["geometry"]["coordinates"]  # [lng, lat] pairs
+            route_coords = data["routes"][0]["geometry"]["coordinates"]
             duration = data["routes"][0]["duration"]
             distance = data["routes"][0]["distance"]
-            # Convertir a (lat, lon)
             return [(coord[1], coord[0]) for coord in route_coords], duration, distance
     except requests.RequestException as e:
         print("Error al pedir ruta OSRM:", e)
     return None, None, None
 
-
 def generate_stations_near_start(route_coords, num_stations=3, max_distance_meters=30):
-    """
-    Genera estaciones simuladas cerca del inicio de la ruta.
-    Devuelve lista de tuples (lat, lon).
-    """
+    """Genera estaciones simuladas cerca del inicio de la ruta."""
     if not route_coords or len(route_coords) == 0:
         return []
 
     stations = []
-    # Usamos los primeros puntos de la ruta para ubicar estaciones
     for i in range(num_stations):
         point = route_coords[min(i, len(route_coords) - 1)]
         lat = point[0]
         lon = point[1]
-        # Aproximación simple: 1 grado ≈ 111 km
         lat_offset = random.uniform(-max_distance_meters / 111000.0, max_distance_meters / 111000.0)
-        # Para longitud corregimos por latitud
         lon_offset = random.uniform(-max_distance_meters / (111000.0 * max(0.5, abs(lat) / 90.0 + 0.5)),
                                     max_distance_meters / (111000.0 * max(0.5, abs(lat) / 90.0 + 0.5)))
-        # La fórmula anterior es una heurística; para propósito de demo está bien.
         stations.append((lat + lat_offset, lon + lon_offset))
     return stations
 
-
 # -----------------------------
-# TUS CLASES PyQt (si PyQt está disponible, las dejamos intactas)
+# DESKTOP GUI (PyQt) - Only if not in web mode
 # -----------------------------
-if PYQT_AVAILABLE:
+if not WEB_MODE and PYQT_AVAILABLE:
     class DisabilitySelector(QDialog):
         def __init__(self):
             super().__init__()
@@ -145,7 +138,6 @@ if PYQT_AVAILABLE:
 
         def get_disability(self):
             return self.comboBox.currentText()
-
 
     class RouteMapperApp(QWidget):
         def __init__(self):
@@ -244,7 +236,7 @@ if PYQT_AVAILABLE:
                                     popup=f"Estación {idx} (simulada)",
                                     tooltip=f"Estación {idx}").add_to(m)
 
-            # Info de tiempo y distancia (OSRM devuelve segundos y metros)
+            # Info de tiempo y distancia
             duration_min = duration / 60.0 if duration else None
             distance_km = distance / 1000.0 if distance else None
             info_text = "Discapacidad seleccionada: {}".format(self.disability_type or "No especificada")
@@ -258,7 +250,6 @@ if PYQT_AVAILABLE:
                 fd, path = tempfile.mkstemp(suffix=".html")
                 os.close(fd)
                 m.save(path)
-                # Guardamos la ruta para poder eliminar el archivo después si queremos
                 self.temp_html_path = path
                 local_url = QUrl.fromLocalFile(path)
                 self.map_view.setUrl(local_url)
@@ -275,19 +266,15 @@ if PYQT_AVAILABLE:
                 pass
             event.accept()
 
-
     def main_desktop():
         app = QApplication(sys.argv)
         window = RouteMapperApp()
         window.show()
         sys.exit(app.exec_())
 
-
 # -----------------------------
-# AÑADIMOS UN FLASK APP USANDO LAS MISMAS FUNCIONES
+# FLASK WEB APP
 # -----------------------------
-from flask import Flask, request, send_file, render_template, render_template_string, abort, jsonify, make_response
-
 flask_app = Flask(__name__, template_folder="templates", static_folder="static")
 
 FRAME_ANCESTORS_ENV = os.environ.get(
@@ -299,40 +286,60 @@ FRAME_ANCESTORS_ENV = os.environ.get(
 def add_frame_headers(response):
     csp_value = f"frame-ancestors 'self' {FRAME_ANCESTORS_ENV};"
     response.headers["Content-Security-Policy"] = csp_value
-    # No añadimos X-Frame-Options para evitar bloqueo de embedding
     return response
-
-INDEX_HTML = """
-<!doctype html>
-<html>
-<head><meta charset="utf-8"><title>Route Mapper (Web)</title></head>
-<body>
-  <h3>Route Mapper (Web)</h3>
-  <form action="/map" method="get" target="_self">
-    <input name="start" type="text" placeholder="Dirección inicial" required>
-    <input name="end" type="text" placeholder="Dirección final" required>
-    <select name="num_stations">
-      <option value="2">2</option><option value="3" selected>3</option><option value="4">4</option>
-    </select>
-    <button type="submit">Generar</button>
-  </form>
-  <p>Nota: Nominatim y OSRM son servicios públicos con límites de uso.</p>
-</body>
-</html>
-"""
 
 @flask_app.route("/")
 def index_web():
-    # si templates/index.html existe, servirlo, si no usar inline
-    tpl_path = os.path.join(os.path.dirname(__file__), "templates", "index.html")
-    if os.path.exists(tpl_path):
-        return render_template("index.html")
-    return render_template_string(INDEX_HTML)
+    return render_template("index.html")
+
+@flask_app.route("/health")
+def health_web():
+    return jsonify({"status": "healthy", "mode": "web"})
+
+@flask_app.route("/api/route")
+def api_route_web():
+    start = request.args.get("start", "").strip()
+    end = request.args.get("end", "").strip()
+    
+    try:
+        num_stations = int(request.args.get("num_stations", 3))
+    except ValueError:
+        num_stations = 3
+
+    if not start or not end:
+        return jsonify({"error": "Se requieren direcciones de inicio y fin"}), 400
+
+    start_coords = get_coordinates(start)
+    end_coords = get_coordinates(end)
+    
+    if not start_coords:
+        return jsonify({"error": f"No se pudieron encontrar coordenadas para: {start}"}), 404
+    if not end_coords:
+        return jsonify({"error": f"No se pudieron encontrar coordenadas para: {end}"}), 404
+
+    route_coords, duration, distance = get_route(start_coords, end_coords)
+    
+    if not route_coords:
+        return jsonify({"error": "No se pudo calcular la ruta entre las ubicaciones especificadas"}), 500
+
+    stations = generate_stations_near_start(route_coords, num_stations=num_stations)
+    
+    response_data = {
+        "start": {"lat": start_coords[0], "lng": start_coords[1]},
+        "end": {"lat": end_coords[0], "lng": end_coords[1]},
+        "route": [{"lat": lat, "lng": lng} for lat, lng in route_coords],
+        "stations": [{"lat": lat, "lng": lng} for lat, lng in stations],
+        "duration_seconds": duration,
+        "distance_meters": distance
+    }
+    
+    return jsonify(response_data)
 
 @flask_app.route("/map")
 def map_web():
-    start = request.args.get("start")
-    end = request.args.get("end")
+    start = request.args.get("start", "").strip()
+    end = request.args.get("end", "").strip()
+    
     try:
         num_stations = int(request.args.get("num_stations", 3))
     except ValueError:
@@ -343,15 +350,15 @@ def map_web():
 
     start_coords = get_coordinates(start)
     end_coords = get_coordinates(end)
+    
     if not start_coords or not end_coords:
         return abort(404, "No se encontraron coordenadas para alguna dirección")
 
-    # reusar tu función get_route
     route_coords, duration, distance = get_route(start_coords, end_coords)
+    
     if not route_coords:
         return abort(500, "No se pudo obtener la ruta desde OSRM")
 
-    # construir mapa con folium idéntico a la versión desktop
     m = folium.Map(location=start_coords, zoom_start=14)
     folium.PolyLine(route_coords, weight=6, opacity=0.8).add_to(m)
     folium.Marker(location=start_coords, popup="Inicio", tooltip="Inicio").add_to(m)
@@ -361,20 +368,11 @@ def map_web():
     for idx, s in enumerate(stations, start=1):
         folium.CircleMarker(location=s, radius=6, popup=f"Estación {idx} (simulada)", tooltip=f"Estación {idx}").add_to(m)
 
-    # Info adicional (no rompe tu lógica original)
-    distance_km = distance / 1000.0 if distance else None
-    duration_min = duration / 60.0 if duration else None
-    caption = ""
-    if distance_km is not None and duration_min is not None:
-        caption = f"<div style='font-size:12px'>Distancia: {distance_km:.2f} km — Duración aprox.: {duration_min:.1f} min</div>"
-        folium.map.Marker(route_coords[len(route_coords)//2], icon=folium.DivIcon(html=caption)).add_to(m)
-
-    # Guardar HTML temporal y devolverlo (Flask servirá ese HTML)
     tmp = tempfile.NamedTemporaryFile(suffix=".html", delete=False)
     tmp.close()
     m.save(tmp.name)
     resp = make_response(send_file(tmp.name, mimetype="text/html"))
-    # borrar el archivo temporal en background para no acumular archivos
+    
     def _del_later(path, delay=30):
         try:
             time.sleep(delay)
@@ -382,39 +380,35 @@ def map_web():
                 os.remove(path)
         except Exception:
             pass
+    
     threading.Thread(target=_del_later, args=(tmp.name, 30), daemon=True).start()
     return resp
 
-# Exponer la variable 'app' para gunicorn/render
+# Expose both for compatibility
 app = flask_app
 
-
 # -----------------------------
-# EJECUCIÓN: si env FLASK_MODE=web (o si nos piden gunicorn en Render), corre Flask.
-# Si el entorno tiene PyQt y el usuario ejecuta el script normal, se ejecuta el GUI.
+# MAIN EXECUTION
 # -----------------------------
 def main():
-    # Modo web si pedimos explícitamente con variable de entorno o argumento
-    mode_env = os.environ.get("RUN_MODE", "").lower()
+    # Determine mode
     if len(sys.argv) > 1 and sys.argv[1].lower() in ("web", "server", "flask"):
         mode = "web"
-    elif mode_env == "web":
+    elif os.environ.get("RENDER") or os.environ.get("FLASK_MODE") == "web":
         mode = "web"
     else:
         mode = "desktop"
 
     if mode == "web":
-        # Si ejecutas directamente: python app.py web
-        # Para despliegue con gunicorn o render, gunicorn importará 'app' y no llegará aquí.
         port = int(os.environ.get("PORT", 5000))
         flask_app.run(host="0.0.0.0", port=port)
     else:
         if not PYQT_AVAILABLE:
-            print("PyQt no está disponible en este entorno. Para modo desktop instala PyQt5.")
-            return
-        # Ejecutar GUI tal como estaba
-        main_desktop()
-
+            print("PyQt no está disponible. Ejecutando en modo web...")
+            port = int(os.environ.get("PORT", 5000))
+            flask_app.run(host="0.0.0.0", port=port)
+        else:
+            main_desktop()
 
 if __name__ == "__main__":
     main()

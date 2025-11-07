@@ -1,4 +1,3 @@
-<!-- templates/index.html -->
 <!doctype html>
 <html lang="es">
 <head>
@@ -10,44 +9,85 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <style>
     #map { height: 520px; width: 100%; border-radius: 8px; }
+    .loading { display: none; }
+    .station-info { background: #fff3cd; border-left: 4px solid #ffc107; }
   </style>
 </head>
 <body class="bg-light">
 <div class="container py-4">
-  <h1 class="mb-3">Route Mapper</h1>
+  <div class="row">
+    <div class="col-12">
+      <h1 class="mb-3 text-primary">🚗 Route Mapper</h1>
+      <p class="text-muted">Encuentra la mejor ruta y estaciones cercanas</p>
+    </div>
+  </div>
 
-  <div class="card mb-3">
+  <div class="card mb-4 shadow-sm">
     <div class="card-body">
-      <form id="frm" class="row g-2 align-items-center">
-        <div class="col-auto">
-          <input id="start" class="form-control" placeholder="Dirección inicial (ej: Bogotá, Colombia)" required>
+      <form id="frm" class="row g-3 align-items-end">
+        <div class="col-md-4">
+          <label for="start" class="form-label">Dirección inicial</label>
+          <input id="start" class="form-control" placeholder="Ej: Bogotá, Colombia" required>
         </div>
-        <div class="col-auto">
-          <input id="end" class="form-control" placeholder="Dirección final (ej: Medellín, Colombia)" required>
+        <div class="col-md-4">
+          <label for="end" class="form-label">Dirección final</label>
+          <input id="end" class="form-control" placeholder="Ej: Medellín, Colombia" required>
         </div>
-        <div class="col-auto">
+        <div class="col-md-2">
+          <label for="num_stations" class="form-label">Estaciones</label>
           <select id="num_stations" class="form-select">
-            <option value="2">2</option><option value="3" selected>3</option><option value="4">4</option>
+            <option value="2">2</option>
+            <option value="3" selected>3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
           </select>
         </div>
-        <div class="col-auto">
-          <button id="go" type="button" class="btn btn-primary">Generar</button>
+        <div class="col-md-2">
+          <button id="go" type="button" class="btn btn-primary w-100">Generar Ruta</button>
         </div>
-        <div class="col-auto ms-auto">
-          <button id="ai-btn" class="btn btn-outline-secondary" type="button">Sugerir con IA</button>
+        <div class="col-12">
+          <div class="loading spinner-border spinner-border-sm text-primary" role="status">
+            <span class="visually-hidden">Cargando...</span>
+          </div>
         </div>
       </form>
     </div>
   </div>
 
-  <div id="map" class="mb-3"></div>
+  <div class="row">
+    <div class="col-md-8">
+      <div id="map" class="mb-3"></div>
+    </div>
+    <div class="col-md-4">
+      <div id="info" class="mb-3">
+        <div class="alert alert-info">
+          <strong>Instrucciones:</strong><br>
+          1. Ingresa direcciones de inicio y fin<br>
+          2. Click en "Generar Ruta"<br>
+          3. Las estaciones se actualizan cada 20s
+        </div>
+      </div>
+      
+      <div class="card">
+        <div class="card-header bg-warning text-dark">
+          <strong>💡 Sugerencias con IA</strong>
+        </div>
+        <div class="card-body">
+          <textarea id="ai-prompt" class="form-control" rows="3" placeholder="Ej: 'Sugiere una ruta más accesible para movilidad reducida'"></textarea>
+          <button id="ai-btn" class="btn btn-outline-primary mt-2 w-100" type="button">Consultar IA</button>
+          <div class="mt-3">
+            <div id="ai-result" class="small text-muted"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-  <div class="d-flex gap-2">
-    <div id="info" class="flex-grow-1"></div>
-    <div class="w-50">
-      <textarea id="ai-prompt" class="form-control" rows="3" placeholder="Pide a la IA: 'Sugiere una ruta más accesible para movilidad reducida'"></textarea>
-      <div class="mt-2">
-        <div id="ai-result" class="small text-muted"></div>
+  <div class="row mt-3">
+    <div class="col-12">
+      <div class="alert alert-warning station-info">
+        <strong>ℹ️ Información:</strong> Las estaciones mostradas son simuladas y se generan aleatoriamente cerca del inicio de la ruta. 
+        La aplicación se actualiza automáticamente cada 20 segundos.
       </div>
     </div>
   </div>
@@ -55,6 +95,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+  // Initialize map
   const map = L.map('map').setView([4.6, -74.07], 5);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
@@ -73,67 +114,150 @@
     if(endMarker) { map.removeLayer(endMarker); endMarker = null; }
   }
 
+  function showLoading(show) {
+    document.querySelector('.loading').style.display = show ? 'inline-block' : 'none';
+    document.getElementById('go').disabled = show;
+    document.getElementById('go').textContent = show ? 'Calculando...' : 'Generar Ruta';
+  }
+
   async function fetchRoute(start, end, num_stations){
+    showLoading(true);
+    document.getElementById('info').innerHTML = '<div class="alert alert-info">Calculando ruta...</div>';
+    
     try{
       const q = new URLSearchParams({start, end, num_stations});
       const res = await fetch('/api/route?' + q.toString());
+      
       if(!res.ok){
-        const e = await res.json().catch(()=>({error:'error'}));
-        document.getElementById('info').innerHTML = '<div class="alert alert-warning">'+(e.error||'Error')+'</div>';
+        const errorData = await res.json();
+        document.getElementById('info').innerHTML = `<div class="alert alert-danger">${errorData.error || 'Error al calcular la ruta'}</div>`;
         return;
       }
+      
       const data = await res.json();
       clearLayers();
-      const latlngs = data.route.map(p=>[p.lat,p.lng]);
-      routeLayer = L.polyline(latlngs, {color:'blue', weight:5}).addTo(map);
-      startMarker = L.marker([data.start.lat,data.start.lng], {title:'Inicio'}).addTo(map);
-      endMarker = L.marker([data.end.lat,data.end.lng], {title:'Destino'}).addTo(map);
-      stationsLayer = L.layerGroup(data.stations.map(s=>L.circleMarker([s.lat,s.lng], {radius:6,color:'orange'}))).addTo(map);
-      map.fitBounds(routeLayer.getBounds(), {padding:[50,50]});
+      
+      // Create route line
+      const latlngs = data.route.map(p => [p.lat, p.lng]);
+      routeLayer = L.polyline(latlngs, {color:'#0d6efd', weight:5, opacity:0.7}).addTo(map);
+      
+      // Create markers
+      startMarker = L.marker([data.start.lat, data.start.lng], {title:'Inicio'})
+        .bindPopup('<strong>📍 Inicio</strong><br>' + start)
+        .addTo(map);
+      
+      endMarker = L.marker([data.end.lat, data.end.lng], {title:'Destino'})
+        .bindPopup('<strong>🎯 Destino</strong><br>' + end)
+        .addTo(map);
+      
+      // Create stations
+      stationsLayer = L.layerGroup(
+        data.stations.map((s, index) => 
+          L.circleMarker([s.lat, s.lng], {
+            radius: 10, 
+            color: '#fd7e14',
+            fillColor: '#ffc107',
+            fillOpacity: 0.8,
+            weight: 2
+          }).bindPopup(`<strong>⛽ Estación ${index + 1}</strong><br>Ubicación simulada cerca del inicio`)
+        )
+      ).addTo(map);
+      
+      // Fit bounds to show entire route
+      map.fitBounds(routeLayer.getBounds(), {padding:[20,20]});
+      
+      // Display route info
       const km = (data.distance_meters/1000).toFixed(2);
       const min = (data.duration_seconds/60).toFixed(1);
-      document.getElementById('info').innerHTML = `<div class="alert alert-info">Distancia: ${km} km — Duración aprox.: ${min} min</div>`;
-    }catch(err){
-      console.error(err);
-      document.getElementById('info').innerHTML = '<div class="alert alert-danger">Error al obtener la ruta.</div>';
+      document.getElementById('info').innerHTML = `
+        <div class="alert alert-success">
+          <h6>✅ Ruta calculada exitosamente</h6>
+          <strong>Distancia:</strong> ${km} km<br>
+          <strong>Duración estimada:</strong> ${min} minutos<br>
+          <strong>Estaciones cercanas:</strong> ${data.stations.length}
+        </div>
+      `;
+      
+    } catch(err) {
+      console.error('Error:', err);
+      document.getElementById('info').innerHTML = '<div class="alert alert-danger">Error de conexión. Intenta nuevamente.</div>';
+    } finally {
+      showLoading(false);
     }
   }
 
-  document.getElementById('go').addEventListener('click', ()=>{
+  // Event listeners
+  document.getElementById('go').addEventListener('click', () => {
     const start = document.getElementById('start').value.trim();
     const end = document.getElementById('end').value.trim();
     const num = document.getElementById('num_stations').value;
-    if(!start || !end){ alert('Ingresa inicio y fin'); return; }
+    
+    if(!start || !end){ 
+      alert('Por favor ingresa tanto la dirección inicial como la final'); 
+      return; 
+    }
+    
     currentParams = {start, end, num};
-    fetchRoute(start,end,num);
+    fetchRoute(start, end, num);
   });
 
-  // IA integration
-  document.getElementById('ai-btn').addEventListener('click', async ()=>{
+  // AI integration
+  document.getElementById('ai-btn').addEventListener('click', async () => {
     const prompt = document.getElementById('ai-prompt').value.trim();
-    if(!prompt){ alert('Escribe una petición para la IA'); return; }
+    if(!prompt){ 
+      alert('Escribe una pregunta o petición para la IA'); 
+      return; 
+    }
+    
     const resEl = document.getElementById('ai-result');
-    resEl.innerText = 'Consultando IA…';
+    const btn = document.getElementById('ai-btn');
+    resEl.innerHTML = '<div class="text-info">Consultando IA…</div>';
+    btn.disabled = true;
+    btn.textContent = 'Consultando...';
+    
     try{
-      const r = await fetch('/api/ai', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompt})});
+      const r = await fetch('/api/ai', {
+        method: 'POST', 
+        headers: {'Content-Type': 'application/json'}, 
+        body: JSON.stringify({prompt})
+      });
+      
       const j = await r.json();
       if(r.ok){
-        resEl.innerText = j.result;
+        resEl.innerHTML = `<div class="text-success"><strong>IA responde:</strong><br>${j.result}</div>`;
       } else {
-        resEl.innerText = j.error || JSON.stringify(j);
+        resEl.innerHTML = `<div class="text-danger"><strong>Error:</strong> ${j.error || 'Error desconocido'}</div>`;
       }
-    }catch(e){
-      resEl.innerText = 'Error llamando a IA';
+    } catch(e) {
+      resEl.innerHTML = '<div class="text-danger">Error de conexión con el servicio de IA</div>';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Consultar IA';
     }
   });
 
-  // Auto-refresh stations every 15s (simulando conductores en tiempo real).
-  setInterval(()=>{
+  // Allow form submission with Enter key
+  document.getElementById('frm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    document.getElementById('go').click();
+  });
+
+  // Auto-refresh stations every 20s
+  setInterval(() => {
     if(currentParams){
-      // only refresh stations & markers by re-fetching route data
+      console.log('Actualizando estaciones...');
       fetchRoute(currentParams.start, currentParams.end, currentParams.num);
     }
-  }, 15000);
+  }, 20000);
+
+  // Enter key support for inputs
+  document.getElementById('start').addEventListener('keypress', (e) => {
+    if(e.key === 'Enter') document.getElementById('go').click();
+  });
+  
+  document.getElementById('end').addEventListener('keypress', (e) => {
+    if(e.key === 'Enter') document.getElementById('go').click();
+  });
 </script>
 </body>
 </html>

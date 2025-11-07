@@ -1,4 +1,115 @@
 /* static/style.css */
-body { background:#f6f7fb; font-family: Inter, Arial, sans-serif; }
-.container { max-width:1100px; }
-#map { box-shadow: 0 6px 18px rgba(0,0,0,0.08); border-radius:8px; }
+body { 
+    background: #f8f9fa; 
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+    line-height: 1.6;
+}
+
+.container { 
+    max-width: 1400px; 
+}
+
+#map { 
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); 
+    border-radius: 10px; 
+    border: 1px solid #dee2e6;
+    transition: all 0.3s ease;
+}
+
+#map:hover {
+    box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+}
+
+.card {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    border: 1px solid #e9ecef;
+    border-radius: 10px;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(13, 110, 253, 0.3);
+}
+
+.btn-outline-primary {
+    border-radius: 8px;
+    font-weight: 500;
+}
+
+.alert {
+    border-radius: 10px;
+    border: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+
+.form-control, .form-select {
+    border-radius: 8px;
+    border: 1px solid #ced4da;
+    transition: all 0.3s ease;
+}
+
+.form-control:focus, .form-select:focus {
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+    border-color: #86b7fe;
+}
+
+.station-info {
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+    border-left: 4px solid #ffc107;
+    border-radius: 8px;
+}
+
+.loading {
+    margin-left: 10px;
+}
+
+/* Responsive improvements */
+@media (max-width: 768px) {
+    .container {
+        padding: 15px;
+    }
+    
+    #map {
+        height: 400px;
+    }
+    
+    .card-body {
+        padding: 1rem;
+    }
+}
+
+/* Custom scrollbar for AI results */
+#ai-result {
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+}
+
+#ai-result::-webkit-scrollbar {
+    width: 6px;
+}
+
+#ai-result::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+
+#ai-result::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+}
+
+#ai-result::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
