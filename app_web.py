@@ -36,7 +36,6 @@ def add_frame_headers(response):
     response.headers["X-Frame-Options"] = "ALLOW-FROM https://sites.google.com"
     return response
 
-# ----- Geocoding function with better error handling -----
 def get_coordinates(address, timeout=10):
     geolocator = Nominatim(user_agent=USER_AGENT, timeout=timeout)
     try:
@@ -53,7 +52,6 @@ def get_coordinates(address, timeout=10):
         print(f"Unexpected geocoding error: {e}")
         return None
 
-# ----- Route function with better error handling -----
 def get_route(start_coords, end_coords):
     if not start_coords or not end_coords:
         print("Missing coordinates for route")
@@ -89,13 +87,11 @@ def get_route(start_coords, end_coords):
         print(f"Unexpected route error: {e}")
         return None, None, None
 
-# ----- Stations generation -----
 def generate_stations_near_start(route_coords, num_stations=3, max_distance_meters=40):
     if not route_coords:
         return []
     
     stations = []
-    # Use first few points of the route for station placement
     placement_points = min(5, len(route_coords))
     
     for i in range(num_stations):
@@ -103,7 +99,6 @@ def generate_stations_near_start(route_coords, num_stations=3, max_distance_mete
         point = route_coords[point_idx]
         lat, lon = point
         
-        # Better random offset calculation
         lat_offset = random.uniform(-max_distance_meters/111000.0, max_distance_meters/111000.0)
         lon_scale = max(0.3, abs(lat)/90.0 + 0.3)
         lon_offset = random.uniform(-max_distance_meters/(111000.0*lon_scale), 
@@ -113,7 +108,6 @@ def generate_stations_near_start(route_coords, num_stations=3, max_distance_mete
     
     return stations
 
-# ----- Web routes -----
 @app.route("/", methods=["GET"])
 def index():
     return render_template("index.html")
@@ -122,7 +116,6 @@ def index():
 def health_check():
     return jsonify({"status": "healthy", "message": "Route Mapper is running"})
 
-# ----- API endpoint -----
 @app.route("/api/route")
 def api_route():
     start = request.args.get("start", "").strip()
@@ -164,7 +157,6 @@ def api_route():
     
     return jsonify(response_data)
 
-# ----- Folium map endpoint -----
 @app.route("/map")
 def map_view():
     start = request.args.get("start", "").strip()
@@ -206,7 +198,6 @@ def map_view():
             fill=True
         ).add_to(m)
 
-    # Save temporary file
     tmp = tempfile.NamedTemporaryFile(suffix=".html", delete=False)
     tmp.close()
     m.save(tmp.name)
@@ -224,7 +215,6 @@ def map_view():
     
     return send_file(tmp.name, mimetype="text/html")
 
-# ----- AI endpoint -----
 @app.route("/api/ai", methods=["POST"])
 def api_ai():
     if not OPENAI_KEY:

@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Route Mapper — Web</title>
+  <title>Mapa de rutas — Web</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -17,7 +17,7 @@
 <div class="container py-4">
   <div class="row">
     <div class="col-12">
-      <h1 class="mb-3 text-primary">🚗 Route Mapper</h1>
+      <h1 class="mb-3 text-primary">🚗 Mapa de rutas</h1>
       <p class="text-muted">Encuentra la mejor ruta y estaciones cercanas</p>
     </div>
   </div>
@@ -95,7 +95,6 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-  // Initialize map
   const map = L.map('map').setView([4.6, -74.07], 5);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
@@ -137,11 +136,9 @@
       const data = await res.json();
       clearLayers();
       
-      // Create route line
       const latlngs = data.route.map(p => [p.lat, p.lng]);
       routeLayer = L.polyline(latlngs, {color:'#0d6efd', weight:5, opacity:0.7}).addTo(map);
       
-      // Create markers
       startMarker = L.marker([data.start.lat, data.start.lng], {title:'Inicio'})
         .bindPopup('<strong>📍 Inicio</strong><br>' + start)
         .addTo(map);
@@ -150,7 +147,6 @@
         .bindPopup('<strong>🎯 Destino</strong><br>' + end)
         .addTo(map);
       
-      // Create stations
       stationsLayer = L.layerGroup(
         data.stations.map((s, index) => 
           L.circleMarker([s.lat, s.lng], {
@@ -163,10 +159,8 @@
         )
       ).addTo(map);
       
-      // Fit bounds to show entire route
       map.fitBounds(routeLayer.getBounds(), {padding:[20,20]});
       
-      // Display route info
       const km = (data.distance_meters/1000).toFixed(2);
       const min = (data.duration_seconds/60).toFixed(1);
       document.getElementById('info').innerHTML = `
@@ -186,7 +180,6 @@
     }
   }
 
-  // Event listeners
   document.getElementById('go').addEventListener('click', () => {
     const start = document.getElementById('start').value.trim();
     const end = document.getElementById('end').value.trim();
@@ -201,7 +194,6 @@
     fetchRoute(start, end, num);
   });
 
-  // AI integration
   document.getElementById('ai-btn').addEventListener('click', async () => {
     const prompt = document.getElementById('ai-prompt').value.trim();
     if(!prompt){ 
@@ -236,13 +228,11 @@
     }
   });
 
-  // Allow form submission with Enter key
   document.getElementById('frm').addEventListener('submit', (e) => {
     e.preventDefault();
     document.getElementById('go').click();
   });
 
-  // Auto-refresh stations every 20s
   setInterval(() => {
     if(currentParams){
       console.log('Actualizando estaciones...');
@@ -250,7 +240,6 @@
     }
   }, 20000);
 
-  // Enter key support for inputs
   document.getElementById('start').addEventListener('keypress', (e) => {
     if(e.key === 'Enter') document.getElementById('go').click();
   });

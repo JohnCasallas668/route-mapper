@@ -1,4 +1,3 @@
-# app.py - Versión unificada para compatibilidad
 import os
 import sys
 import tempfile
@@ -12,12 +11,9 @@ load_dotenv()
 
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
-
-# Check if running in web mode
 WEB_MODE = os.environ.get('RENDER', False) or os.environ.get('FLASK_MODE') == 'web'
 
 if not WEB_MODE:
-    # Only import PyQt for desktop mode
     try:
         from PyQt5.QtWidgets import (
             QApplication, QWidget, QVBoxLayout, QLabel,
@@ -31,12 +27,8 @@ if not WEB_MODE:
 else:
     PYQT_AVAILABLE = False
 
-# Flask imports for web mode
 from flask import Flask, request, send_file, render_template, abort, jsonify, make_response
 
-# -----------------------------
-# CORE FUNCTIONS (shared between desktop and web)
-# -----------------------------
 def get_coordinates(address, user_agent="route_mapper_app", timeout=10):
     """Devuelve (lat, lon) o None si no encuentra."""
     geolocator = Nominatim(user_agent=user_agent, timeout=timeout)
@@ -87,9 +79,6 @@ def generate_stations_near_start(route_coords, num_stations=3, max_distance_mete
         stations.append((lat + lat_offset, lon + lon_offset))
     return stations
 
-# -----------------------------
-# DESKTOP GUI (PyQt) - Only if not in web mode
-# -----------------------------
 if not WEB_MODE and PYQT_AVAILABLE:
     class DisabilitySelector(QDialog):
         def __init__(self):
@@ -149,7 +138,6 @@ if not WEB_MODE and PYQT_AVAILABLE:
             self.initUI()
 
         def initUI(self):
-            # Mostrar selector de discapacidad al inicio
             disability_dialog = DisabilitySelector()
             if disability_dialog.exec_() == QDialog.Accepted:
                 self.disability_type = disability_dialog.get_disability()
@@ -170,10 +158,8 @@ if not WEB_MODE and PYQT_AVAILABLE:
             self.generate_button = QPushButton("Generar Mapa")
             self.generate_button.clicked.connect(self.generate_map)
 
-            # Vista del mapa
             self.map_view = QWebEngineView()
 
-            # Info label (tiempo y distancia)
             self.info_label = QLabel("")
             self.info_label.setAlignment(Qt.AlignCenter)
             self.info_label.setStyleSheet("""
@@ -201,7 +187,6 @@ if not WEB_MODE and PYQT_AVAILABLE:
                 QMessageBox.warning(self, "Error", "Por favor ingrese direcciones de inicio y final.")
                 return
 
-            # Obtener coordenadas
             start_coords = get_coordinates(start_addr)
             if not start_coords:
                 QMessageBox.critical(self, "Error", f"No se encontraron coordenadas para: {start_addr}")
@@ -212,23 +197,19 @@ if not WEB_MODE and PYQT_AVAILABLE:
                 QMessageBox.critical(self, "Error", f"No se encontraron coordenadas para: {end_addr}")
                 return
 
-            # Obtener ruta desde OSRM
             route_coords, duration, distance = get_route(start_coords, end_coords)
             if not route_coords:
                 QMessageBox.critical(self, "Error", "No se pudo obtener la ruta desde el servicio de enrutamiento.")
                 return
 
-            # Crear el mapa centrado en el punto inicial
             m = folium.Map(location=start_coords, zoom_start=14)
 
-            # Añadir línea de la ruta
             folium.PolyLine(route_coords, weight=6, opacity=0.8).add_to(m)
 
             # Añadir marcadores de inicio y fin
             folium.Marker(location=start_coords, popup="Inicio", tooltip="Inicio").add_to(m)
             folium.Marker(location=end_coords, popup="Destino", tooltip="Destino").add_to(m)
 
-            # Generar estaciones cercanas simuladas
             stations = generate_stations_near_start(route_coords, num_stations=4, max_distance_meters=40)
             for idx, st in enumerate(stations, start=1):
                 folium.CircleMarker(location=st,
@@ -236,7 +217,6 @@ if not WEB_MODE and PYQT_AVAILABLE:
                                     popup=f"Estación {idx} (simulada)",
                                     tooltip=f"Estación {idx}").add_to(m)
 
-            # Info de tiempo y distancia
             duration_min = duration / 60.0 if duration else None
             distance_km = distance / 1000.0 if distance else None
             info_text = "Discapacidad seleccionada: {}".format(self.disability_type or "No especificada")
@@ -245,7 +225,6 @@ if not WEB_MODE and PYQT_AVAILABLE:
 
             self.info_label.setText(info_text)
 
-            # Guardar mapa a un HTML temporal y cargarlo en QWebEngineView
             try:
                 fd, path = tempfile.mkstemp(suffix=".html")
                 os.close(fd)
@@ -272,9 +251,6 @@ if not WEB_MODE and PYQT_AVAILABLE:
         window.show()
         sys.exit(app.exec_())
 
-# -----------------------------
-# FLASK WEB APP
-# -----------------------------
 flask_app = Flask(__name__, template_folder="templates", static_folder="static")
 
 FRAME_ANCESTORS_ENV = os.environ.get(
@@ -384,12 +360,9 @@ def map_web():
     threading.Thread(target=_del_later, args=(tmp.name, 30), daemon=True).start()
     return resp
 
-# Expose both for compatibility
 app = flask_app
 
-# -----------------------------
-# MAIN EXECUTION
-# -----------------------------
+
 def main():
     # Determine mode
     if len(sys.argv) > 1 and sys.argv[1].lower() in ("web", "server", "flask"):
